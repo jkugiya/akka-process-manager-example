@@ -6,7 +6,7 @@ import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AkkaTaggerAdapter}
-import jkugiya.moneytransfer.impl.Account.{Command, Credit, CreditAccepted, CreditDenied, Debit, DebitAccepted, DebitDenied, Event}
+import jkugiya.moneytransfer.impl.Account.{Command, Credit, CreditAccepted, Debit, DebitAccepted, DebitDenied, Event}
 import play.api.libs.json.{Format, Json}
 
 case class Account(userId: Int, amount: BigDecimal) {
@@ -33,8 +33,6 @@ case class Account(userId: Int, amount: BigDecimal) {
       Account(userId, before + orderedAmount)
     case DebitDenied(_) =>
       this
-    case CreditDenied(_) =>
-      this
   }
 }
 
@@ -45,7 +43,7 @@ object Account {
     create(userId, persistenceId)
       .withTagger(AkkaTaggerAdapter.fromLagom(entityContext, Event.Tag))
   }
-  def create(userId: Int, persistenceId: PersistenceId) =
+  private def create(userId: Int, persistenceId: PersistenceId) =
     EventSourcedBehavior
       .withEnforcedReplies[Command, Event, Account](
         persistenceId = persistenceId,
@@ -59,7 +57,13 @@ object Account {
   object Debit {
     sealed trait Result
     case class Accepted(before: BigDecimal, amount: BigDecimal) extends Result
+    object Accepted {
+      implicit val format: Format[Accepted] = Json.format
+    }
     case class Denied(current: BigDecimal) extends Result
+    object Denied {
+      implicit val format: Format[Denied] = Json.format
+    }
   }
   case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
 
@@ -83,9 +87,6 @@ object Account {
   object DebitDenied {
     implicit val format: Format[DebitDenied] = Json.format
   }
-  case class CreditDenied(userId: Int) extends Event
-  object CreditDenied {
-    implicit val format: Format[CreditDenied] = Json.format
-  }
 
+  implicit val format: Format[Account] = Json.format
 }

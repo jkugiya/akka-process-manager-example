@@ -1,17 +1,20 @@
 package jkugiya.moneytransfer.impl
 
 import akka.cluster.sharding.typed.scaladsl.Entity
+import akka.util.Timeout
 import com.lightbend.lagom.scaladsl.api.ServiceLocator
 import com.lightbend.lagom.scaladsl.api.ServiceLocator.NoServiceLocator
 import com.lightbend.lagom.scaladsl.broker.kafka.LagomKafkaComponents
 import com.lightbend.lagom.scaladsl.devmode.LagomDevModeComponents
 import com.lightbend.lagom.scaladsl.persistence.jdbc.JdbcPersistenceComponents
-import com.lightbend.lagom.scaladsl.playjson.JsonSerializerRegistry
+import com.lightbend.lagom.scaladsl.playjson.{EmptyJsonSerializerRegistry, JsonSerializerRegistry}
 import com.lightbend.lagom.scaladsl.server._
 import com.softwaremill.macwire._
-import jkugiya.moneytransfer.api.MoneytransferService
+import jkugiya.moneytransfer.api.AccountService
 import play.api.db.HikariCPComponents
 import play.api.libs.ws.ahc.AhcWSComponents
+
+import scala.concurrent.duration.DurationInt
 
 class MoneytransferLoader extends LagomApplicationLoader {
 
@@ -23,7 +26,7 @@ class MoneytransferLoader extends LagomApplicationLoader {
   override def loadDevMode(context: LagomApplicationContext): LagomApplication =
     new MoneytransferApplication(context) with LagomDevModeComponents
 
-  override def describeService = Some(readDescriptor[MoneytransferService])
+  override def describeService = Some(readDescriptor[AccountService])
 }
 
 abstract class MoneytransferApplication(context: LagomApplicationContext)
@@ -33,11 +36,12 @@ abstract class MoneytransferApplication(context: LagomApplicationContext)
     with LagomKafkaComponents
     with AhcWSComponents {
 
+  implicit val timeout: Timeout = 3.seconds
   // Bind the service that this server provides
-  override lazy val lagomServer: LagomServer = serverFor[MoneytransferService](wire[MoneytransferServiceImpl])
+  override lazy val lagomServer: LagomServer = serverFor[AccountService](wire[AccountServiceImpl])
 
   // Register the JSON serializer registry
-  override lazy val jsonSerializerRegistry: JsonSerializerRegistry = MoneytransferSerializerRegistry
+  override lazy val jsonSerializerRegistry: JsonSerializerRegistry = EmptyJsonSerializerRegistry
 
   // Initialize the sharding of the Aggregate. The following starts the aggregate Behavior under
   // a given sharding entity typeKey.
