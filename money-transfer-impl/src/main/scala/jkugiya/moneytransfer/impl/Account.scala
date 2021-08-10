@@ -6,7 +6,7 @@ import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AkkaTaggerAdapter}
-import jkugiya.moneytransfer.impl.Account.{Command, Credit, CreditAccepted, Debit, DebitAccepted, DebitDenied, Event}
+import jkugiya.moneytransfer.impl.Account.{Command, Credit, CreditAccepted, Debit, DebitAccepted, DebitDenied, Event, Get}
 import play.api.libs.json.{Format, Json}
 
 case class Account(userId: Int, amount: BigDecimal) {
@@ -24,6 +24,8 @@ case class Account(userId: Int, amount: BigDecimal) {
         Effect.persist(DebitAccepted(userId, before = amount, amount = orderedAmount))
           .thenReply(ref)(_ => Debit.Accepted(amount, orderedAmount))
       }
+    case Get(ref) =>
+      Effect.reply(ref)(amount)
   }
 
   def applyEvent(event: Event): Account = event match {

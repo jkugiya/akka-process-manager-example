@@ -44,7 +44,7 @@ lazy val `money-transfer-api` = (project in file("money-transfer-api"))
   .settings(
     libraryDependencies ++= Seq(
       lagomScaladslApi
-    )
+    ) ++ circe ++ akka
   )
 
 lazy val `money-transfer-impl` = (project in file("money-transfer-impl"))
@@ -59,8 +59,13 @@ lazy val `money-transfer-impl` = (project in file("money-transfer-impl"))
       macwire,
       "mysql" % "mysql-connector-java" % "8.0.25",
       scalaTest
-    ) ++ circe ++ akka
+    )
   )
   .settings(lagomForkedTestSettings)
   .dependsOn(`money-transfer-api`)
 
+ThisBuild / lagomCassandraEnabled := false
+
+ThisBuild / lagomKafkaEnabled := false
+ThisBuild / lagomKafkaPort := 9092
+ThisBuild / lagomKafkaZookeeperPort := 2181

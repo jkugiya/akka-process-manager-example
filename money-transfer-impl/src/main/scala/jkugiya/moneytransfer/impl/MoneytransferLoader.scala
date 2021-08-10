@@ -41,7 +41,7 @@ abstract class MoneytransferApplication(context: LagomApplicationContext)
   override lazy val lagomServer: LagomServer = serverFor[AccountService](wire[AccountServiceImpl])
 
   // Register the JSON serializer registry
-  override lazy val jsonSerializerRegistry: JsonSerializerRegistry = EmptyJsonSerializerRegistry
+  override lazy val jsonSerializerRegistry: JsonSerializerRegistry = MoneytransferSerializerRegistry
 
   // Initialize the sharding of the Aggregate. The following starts the aggregate Behavior under
   // a given sharding entity typeKey.
