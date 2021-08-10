@@ -66,6 +66,7 @@ object Account {
     }
   }
   case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
+  case class Get(ref: ActorRef[BigDecimal]) extends Command
 
   val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("account")
 

@@ -27,4 +27,11 @@ class AccountServiceImpl(clusterSharding: ClusterSharding)(implicit ec: Executio
          NotUsed
     }
   }
+
+  override def get(customerId: Int): ServiceCall[NotUsed, AccountService.Balance] = ServiceCall { _ =>
+    val ref = clusterSharding.entityRefFor(Account.TypeKey, customerId.toString)
+    ref.ask[BigDecimal](handler => Account.Get(handler)).map { result =>
+      AccountService.Balance(result)
+    }
+  }
 }
