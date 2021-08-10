@@ -9,6 +9,6 @@ object MoneytransferSerializerRegistry extends JsonSerializerRegistry{
     JsonSerializer[Account.DebitAccepted],
     JsonSerializer[Account.DebitDenied],
     JsonSerializer[Account.CreditAccepted],
-    JsonSerializer[Account],
+    JsonSerializer[Account]
   )
 }
