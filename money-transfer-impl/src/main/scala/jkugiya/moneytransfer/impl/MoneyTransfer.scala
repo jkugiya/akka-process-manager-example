@@ -1,16 +1,11 @@
 package jkugiya.moneytransfer.impl
 
 import akka.actor.typed.Behavior
-import akka.cluster.sharding.typed.scaladsl.EntityContext
+import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.ReplyEffect
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
-import com.lightbend.lagom.scaladsl.persistence.{
-  AggregateEvent,
-  AggregateEventTag,
-  AggregateEventTagger,
-  AkkaTaggerAdapter
-}
+import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AggregateEventTagger, AkkaTaggerAdapter}
 import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Event, Status}
 import play.api.libs.json._
 
@@ -86,6 +81,8 @@ case class MoneyTransfer(id: UUID,
 }
 
 object MoneyTransfer {
+  val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("money_transfer")
+
   sealed trait Confirmation
   object Confirmation {
     case object OK extends Confirmation

@@ -6,11 +6,11 @@ import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AkkaTaggerAdapter}
-import jkugiya.moneytransfer.impl.Account.{Command, Credit, CreditAccepted, Debit, DebitAccepted, DebitDenied, Event, Get}
+import jkugiya.moneytransfer.impl.Account.{Command, CreditAccepted, DebitAccepted, DebitDenied, Event}
 import play.api.libs.json.{Format, Json}
 
 case class Account(userId: Int, amount: BigDecimal) {
-
+  import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, Account] = cmd match {
     case Credit(orderedAmount, ref) =>
       Effect
@@ -55,20 +55,22 @@ object Account {
       )
 
   sealed trait Command
-  case class Debit(amount: BigDecimal, ref: ActorRef[Debit.Result]) extends Command
-  object Debit {
-    sealed trait Result
-    case class Accepted(before: BigDecimal, amount: BigDecimal) extends Result
-    object Accepted {
-      implicit val format: Format[Accepted] = Json.format
+  object Command {
+    case class Debit(amount: BigDecimal, ref: ActorRef[Debit.Result]) extends Command
+    object Debit {
+      sealed trait Result
+      case class Accepted(before: BigDecimal, amount: BigDecimal) extends Result
+      object Accepted {
+        implicit val format: Format[Accepted] = Json.format
+      }
+      case class Denied(current: BigDecimal) extends Result
+      object Denied {
+        implicit val format: Format[Denied] = Json.format
+      }
     }
-    case class Denied(current: BigDecimal) extends Result
-    object Denied {
-      implicit val format: Format[Denied] = Json.format
-    }
+    case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
+    case class Get(ref: ActorRef[BigDecimal]) extends Command
   }
-  case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
-  case class Get(ref: ActorRef[BigDecimal]) extends Command
 
   val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("account")
 
