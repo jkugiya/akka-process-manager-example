@@ -4,13 +4,12 @@ import com.lightbend.lagom.scaladsl.playjson.{JsonSerializer, JsonSerializerRegi
 
 object MoneytransferSerializerRegistry extends JsonSerializerRegistry{
   override def serializers: Seq[JsonSerializer[_]] = Seq(
-    JsonSerializer[Account.Command.Debit.Denied],
-    JsonSerializer[Account.Command.Debit.Accepted],
+    // JsonSerializer[Account.Command], ActorRefs cant be serialized by play-json
     JsonSerializer[Account.Event.DebitAccepted],
     JsonSerializer[Account.Event.DebitDenied],
     JsonSerializer[Account.Event.CreditAccepted],
     JsonSerializer[Account],
-    JsonSerializer[MoneyTransfer.Command],
+    // JsonSerializer[MoneyTransfer.Command], ActorRefs cant be serialized by play-json
     JsonSerializer[MoneyTransfer.Event.CreditStarted],
     JsonSerializer[MoneyTransfer.Event.DebitStarted],
     JsonSerializer[MoneyTransfer.Event.DebitRollbackStarted],

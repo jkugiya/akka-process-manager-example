@@ -61,13 +61,7 @@ object Account {
     object Debit {
       sealed trait Result
       case class Accepted(before: BigDecimal, amount: BigDecimal) extends Result
-      object Accepted {
-        implicit val format: Format[Accepted] = Json.format
-      }
       case class Denied(current: BigDecimal) extends Result
-      object Denied {
-        implicit val format: Format[Denied] = Json.format
-      }
     }
     case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
     case class Get(ref: ActorRef[BigDecimal]) extends Command

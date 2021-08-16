@@ -1,20 +1,11 @@
 package jkugiya.moneytransfer.impl
 
-import akka.actor.typed.Behavior
+import akka.actor.typed.{ActorRef, Behavior}
 import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
-import akka.persistence.typed.scaladsl.{
-  Effect,
-  EventSourcedBehavior,
-  ReplyEffect
-}
-import com.lightbend.lagom.scaladsl.persistence.{
-  AggregateEvent,
-  AggregateEventTag,
-  AggregateEventTagger,
-  AkkaTaggerAdapter
-}
-import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Event, Status}
+import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
+import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AggregateEventTagger, AkkaTaggerAdapter}
+import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Confirmation, Event, Status}
 import play.api.libs.json._
 
 import java.util.UUID
@@ -30,26 +21,26 @@ case class MoneyTransfer(id: UUID,
   import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, MoneyTransfer] =
     cmd match {
-      case StartDebit =>
-        Effect.persist(Event.DebitStarted(from, to, amount)).thenNoReply()
-      case StartCredit =>
-        Effect.persist(Event.CreditStarted(from, to, amount)).thenNoReply()
-      case StartDebitRollback =>
+      case StartDebit(ref) =>
+        Effect.persist(Event.DebitStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+      case StartCredit(ref: ActorRef[Confirmation]) =>
+        Effect.persist(Event.CreditStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+      case StartDebitRollback(ref: ActorRef[Confirmation]) =>
         Effect
           .persist(Event.DebitRollbackStarted(from, to, amount))
-          .thenNoReply()
-      case ProcessDebitFail =>
-        Effect.persist(Event.DebitFailed(from, to, amount)).thenNoReply()
-      case ProcessDebitRollbacked =>
+          .thenReply(ref)(_ => Confirmation.OK)
+      case ProcessDebitFail(ref: ActorRef[Confirmation]) =>
+        Effect.persist(Event.DebitFailed(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+      case ProcessDebitRollbacked(ref: ActorRef[Confirmation]) =>
         Effect
           .persist(Event.DebitRollbacked(from, to, amount))
-          .thenNoReply()
-      case ProcessDebitRollbackFail =>
+          .thenReply(ref)(_ => Confirmation.OK)
+      case ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) =>
         Effect
           .persist(Event.DebitRollbackFailed(from, to, amount))
-          .thenNoReply()
-      case ProcessSuccess =>
-        Effect.persist(Event.Succeeded(from, to, amount)).thenNoReply()
+          .thenReply(ref)(_ => Confirmation.OK)
+      case ProcessSuccess(ref: ActorRef[Confirmation]) =>
+        Effect.persist(Event.Succeeded(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
     }
 
   import Event._
@@ -133,26 +124,6 @@ object MoneyTransfer {
   sealed trait Confirmation
   object Confirmation {
     case object OK extends Confirmation
-    case object NG extends Confirmation
-    implicit val format: Format[Confirmation] = Format(
-      Reads[Confirmation] {
-        case JsObject(elems) if elems.contains("result") =>
-          JsSuccess {
-            elems
-              .get("result")
-              .map {
-                case JsString("ok") => OK
-                case _              => NG
-              }
-              .getOrElse(NG)
-          }
-        case _ => JsSuccess(NG)
-      },
-      Writes[Confirmation] {
-        case OK => JsObject(Seq("result" -> JsString("ok")))
-        case NG => JsObject(Seq("result" -> JsString("ng")))
-      }
-    )
   }
 
   sealed trait Status
@@ -190,45 +161,13 @@ object MoneyTransfer {
   }
   sealed trait Command
   object Command {
-    case object StartDebit extends Command
-    case object StartCredit extends Command
-    case object StartDebitRollback extends Command
-    case object ProcessDebitFail extends Command
-    case object ProcessDebitRollbacked extends Command
-    case object ProcessDebitRollbackFail extends Command
-    case object ProcessSuccess extends Command
-    implicit val format: Format[Command] =
-      OFormat({
-        case JsObject(kv) if kv.contains("type") =>
-          kv("type") match {
-            case JsString("start_debit")  => JsSuccess(StartDebit)
-            case JsString("start_credit") => JsSuccess(StartCredit)
-            case JsString("start_debit_rollback") =>
-              JsSuccess(StartDebitRollback)
-            case JsString("process_debit_fail") => JsSuccess(ProcessDebitFail)
-            case JsString("process_debit_rollbacked") =>
-              JsSuccess(ProcessDebitRollbacked)
-            case JsString("process_debit_rollback_fail") =>
-              JsSuccess(ProcessDebitRollbackFail)
-            case JsString("process_success") => JsSuccess(ProcessSuccess)
-            case _                           => JsError("failed to specify command")
-          }
-        case _ =>
-          JsError("failed to specify command")
-      }, {
-        case StartDebit  => JsObject(Seq("type" -> JsString("start_debit")))
-        case StartCredit => JsObject(Seq("type" -> JsString("start_credit")))
-        case StartDebitRollback =>
-          JsObject(Seq("type" -> JsString("start_debit_rollback")))
-        case ProcessDebitFail =>
-          JsObject(Seq("type" -> JsString("process_debit_fail")))
-        case ProcessDebitRollbacked =>
-          JsObject(Seq("type" -> JsString("process_debit_rollbacked")))
-        case ProcessDebitRollbackFail =>
-          JsObject(Seq("type" -> JsString("process_debit_rollback_fail")))
-        case ProcessSuccess =>
-          JsObject(Seq("type" -> JsString("process_success")))
-      })
+    case class StartDebit(ref: ActorRef[Confirmation]) extends Command
+    case class StartCredit(ref: ActorRef[Confirmation]) extends Command
+    case class StartDebitRollback(ref: ActorRef[Confirmation]) extends Command
+    case class ProcessDebitFail(ref: ActorRef[Confirmation]) extends Command
+    case class ProcessDebitRollbacked(ref: ActorRef[Confirmation]) extends Command
+    case class ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) extends Command
+    case class ProcessSuccess(ref: ActorRef[Confirmation]) extends Command
   }
 
   sealed trait Event extends AggregateEvent[Event] {
