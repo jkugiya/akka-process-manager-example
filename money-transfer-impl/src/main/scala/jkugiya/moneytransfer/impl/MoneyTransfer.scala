@@ -3,15 +3,26 @@ package jkugiya.moneytransfer.impl
 import akka.actor.typed.Behavior
 import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
-import akka.persistence.typed.scaladsl.ReplyEffect
-import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
-import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AggregateEventTagger, AkkaTaggerAdapter}
+import akka.persistence.typed.scaladsl.{
+  Effect,
+  EventSourcedBehavior,
+  ReplyEffect
+}
+import com.lightbend.lagom.scaladsl.persistence.{
+  AggregateEvent,
+  AggregateEventTag,
+  AggregateEventTagger,
+  AkkaTaggerAdapter
+}
 import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Event, Status}
 import play.api.libs.json._
 
 import java.util.UUID
 
 case class MoneyTransfer(id: UUID,
+                         from: Int,
+                         to: Int,
+                         amount: BigDecimal,
                          debitResult: Option[Boolean],
                          creditResult: Option[Boolean],
                          status: Status) {
@@ -19,53 +30,86 @@ case class MoneyTransfer(id: UUID,
   import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, MoneyTransfer] =
     cmd match {
-      case StartDebit(from, amount) =>
-        Effect.persist(Event.DebitStarted(from, amount)).thenNoReply()
-      case StartCredit(to, amount) =>
-        Effect.persist(Event.CreditStarted(to, amount)).thenNoReply()
-      case StartDebitRollback(from, amount) =>
-        Effect.persist(Event.DebitRollbackStarted(from, amount)).thenNoReply()
-      case ProcessDebitFail(from, amount) =>
-        Effect.persist(Event.DebitFailed(from, amount)).thenNoReply()
-      case ProcessDebitRollbackFail(from, amount) =>
-        Effect.persist(Event.DebitRollbackFailed(from, amount)).thenNoReply()
-      case ProcessSuccess(from, to, amount) =>
+      case StartDebit =>
+        Effect.persist(Event.DebitStarted(from, to, amount)).thenNoReply()
+      case StartCredit =>
+        Effect.persist(Event.CreditStarted(from, to, amount)).thenNoReply()
+      case StartDebitRollback =>
+        Effect
+          .persist(Event.DebitRollbackStarted(from, to, amount))
+          .thenNoReply()
+      case ProcessDebitFail =>
+        Effect.persist(Event.DebitFailed(from, to, amount)).thenNoReply()
+      case ProcessDebitRollbacked =>
+        Effect
+          .persist(Event.DebitRollbacked(from, to, amount))
+          .thenNoReply()
+      case ProcessDebitRollbackFail =>
+        Effect
+          .persist(Event.DebitRollbackFailed(from, to, amount))
+          .thenNoReply()
+      case ProcessSuccess =>
         Effect.persist(Event.Succeeded(from, to, amount)).thenNoReply()
     }
 
   import Event._
   def applyEvent(evt: Event): MoneyTransfer = evt match {
-    case DebitStarted(_, _) =>
+    case DebitStarted(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = None,
         creditResult = None,
         status = Status.DebitStarted
       )
-    case DebitFailed(_, _) =>
+    case DebitFailed(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = Option(false),
         creditResult = None,
         status = Status.DebitFailed
       )
-    case CreditStarted(_, _) =>
+    case CreditStarted(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = Option(true),
         creditResult = None,
         status = Status.CreditStarted
       )
-    case DebitRollbackStarted(_, _) =>
+    case DebitRollbackStarted(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = Option(true),
         creditResult = Option(false),
         status = Status.DebitRollbackStarted
       )
-    case DebitRollbackFailed(_, _) =>
+    case DebitRollbacked(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
+        debitResult = Option(true),
+        creditResult = Option(false),
+        status = Status.DebitRollbacked
+      )
+    case DebitRollbackFailed(_, _, _) =>
+      MoneyTransfer(
+        id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = Option(true),
         creditResult = Option(false),
         status = Status.DebitRollbackFailed
@@ -73,6 +117,9 @@ case class MoneyTransfer(id: UUID,
     case Succeeded(_, _, _) =>
       MoneyTransfer(
         id = id,
+        from = from,
+        to = to,
+        amount = amount,
         debitResult = Option(true),
         creditResult = Option(true),
         status = Status.Succeeded
@@ -89,12 +136,15 @@ object MoneyTransfer {
     case object NG extends Confirmation
     implicit val format: Format[Confirmation] = Format(
       Reads[Confirmation] {
-        case JsObject(elems) if elems.contains("result")=>
+        case JsObject(elems) if elems.contains("result") =>
           JsSuccess {
-            elems.get("result").map {
-              case JsString("ok") => OK
-              case _ => NG
-            }.getOrElse(NG)
+            elems
+              .get("result")
+              .map {
+                case JsString("ok") => OK
+                case _              => NG
+              }
+              .getOrElse(NG)
           }
         case _ => JsSuccess(NG)
       },
@@ -140,39 +190,79 @@ object MoneyTransfer {
   }
   sealed trait Command
   object Command {
-    case class StartDebit(from: Int, amount: BigDecimal) extends Command
-    case class StartCredit(to: Int, amount: BigDecimal) extends Command
-    case class StartDebitRollback(from: Int, amount: BigDecimal) extends Command
-    case class ProcessDebitFail(from: Int, amount: BigDecimal) extends Command
-    case class ProcessDebitRollbackFail(from: Int, amount: BigDecimal)
-        extends Command
-    case class ProcessSuccess(from: Int, to: Int, amount: BigDecimal)
-        extends Command
+    case object StartDebit extends Command
+    case object StartCredit extends Command
+    case object StartDebitRollback extends Command
+    case object ProcessDebitFail extends Command
+    case object ProcessDebitRollbacked extends Command
+    case object ProcessDebitRollbackFail extends Command
+    case object ProcessSuccess extends Command
+    implicit val format: Format[Command] =
+      OFormat({
+        case JsObject(kv) if kv.contains("type") =>
+          kv("type") match {
+            case JsString("start_debit")  => JsSuccess(StartDebit)
+            case JsString("start_credit") => JsSuccess(StartCredit)
+            case JsString("start_debit_rollback") =>
+              JsSuccess(StartDebitRollback)
+            case JsString("process_debit_fail") => JsSuccess(ProcessDebitFail)
+            case JsString("process_debit_rollbacked") =>
+              JsSuccess(ProcessDebitRollbacked)
+            case JsString("process_debit_rollback_fail") =>
+              JsSuccess(ProcessDebitRollbackFail)
+            case JsString("process_success") => JsSuccess(ProcessSuccess)
+            case _                           => JsError("failed to specify command")
+          }
+        case _ =>
+          JsError("failed to specify command")
+      }, {
+        case StartDebit  => JsObject(Seq("type" -> JsString("start_debit")))
+        case StartCredit => JsObject(Seq("type" -> JsString("start_credit")))
+        case StartDebitRollback =>
+          JsObject(Seq("type" -> JsString("start_debit_rollback")))
+        case ProcessDebitFail =>
+          JsObject(Seq("type" -> JsString("process_debit_fail")))
+        case ProcessDebitRollbacked =>
+          JsObject(Seq("type" -> JsString("process_debit_rollbacked")))
+        case ProcessDebitRollbackFail =>
+          JsObject(Seq("type" -> JsString("process_debit_rollback_fail")))
+        case ProcessSuccess =>
+          JsObject(Seq("type" -> JsString("process_success")))
+      })
   }
 
   sealed trait Event extends AggregateEvent[Event] {
     override def aggregateTag: AggregateEventTagger[Event] = Event.Tag
   }
   object Event {
-    case class DebitStarted(from: Int, amount: BigDecimal) extends Event
+    case class DebitStarted(from: Int, to: Int, amount: BigDecimal)
+        extends Event
     object DebitStarted {
       implicit val format: Format[DebitStarted] = Json.format
     }
-    case class DebitFailed(from: Int, amount: BigDecimal) extends Event
+    case class DebitFailed(from: Int, to: Int, amount: BigDecimal) extends Event
     object DebitFailed {
       implicit val format: Format[DebitFailed] = Json.format
     }
-    case class CreditStarted(to: Int, amount: BigDecimal) extends Event
+    case class CreditStarted(from: Int, to: Int, amount: BigDecimal)
+        extends Event
     object CreditStarted {
       implicit val format: Format[CreditStarted] = Json.format
     }
-    case class DebitRollbackStarted(from: Int, amount: BigDecimal) extends Event
+    case class DebitRollbackStarted(from: Int, to: Int, amount: BigDecimal)
+        extends Event
     object DebitRollbackStarted {
       implicit val format: Format[DebitRollbackStarted] = Json.format
     }
-    case class DebitRollbackFailed(from: Int, amount: BigDecimal) extends Event
+    case class DebitRollbackFailed(from: Int, to: Int, amount: BigDecimal)
+        extends Event
     object DebitRollbackFailed {
       implicit val format: Format[DebitRollbackFailed] = Json.format
+    }
+    case class DebitRollbacked(from: Int, to: Int, amount: BigDecimal)
+        extends Event
+    object DebitRollbacked {
+      implicit val format: Format[DebitRollbacked] = Json.format
     }
     case class Succeeded(from: Int, to: Int, amount: BigDecimal) extends Event
     object Succeeded {
@@ -195,6 +285,9 @@ object MoneyTransfer {
         persistenceId = persistenceId,
         emptyState = MoneyTransfer(
           id = id,
+          from = 0,
+          to = 0,
+          amount = BigDecimal(0),
           debitResult = None,
           creditResult = None,
           status = Status.Init

@@ -7,7 +7,10 @@ import com.lightbend.lagom.scaladsl.api.ServiceLocator.NoServiceLocator
 import com.lightbend.lagom.scaladsl.broker.kafka.LagomKafkaComponents
 import com.lightbend.lagom.scaladsl.devmode.LagomDevModeComponents
 import com.lightbend.lagom.scaladsl.persistence.jdbc.JdbcPersistenceComponents
-import com.lightbend.lagom.scaladsl.playjson.{EmptyJsonSerializerRegistry, JsonSerializerRegistry}
+import com.lightbend.lagom.scaladsl.playjson.{
+  EmptyJsonSerializerRegistry,
+  JsonSerializerRegistry
+}
 import com.lightbend.lagom.scaladsl.server._
 import com.softwaremill.macwire._
 import jkugiya.moneytransfer.api.AccountService
@@ -30,7 +33,7 @@ class MoneytransferLoader extends LagomApplicationLoader {
 }
 
 abstract class MoneytransferApplication(context: LagomApplicationContext)
-  extends LagomApplication(context)
+    extends LagomApplication(context)
     with JdbcPersistenceComponents
     with HikariCPComponents
     with LagomKafkaComponents
@@ -38,17 +41,21 @@ abstract class MoneytransferApplication(context: LagomApplicationContext)
 
   implicit val timeout: Timeout = 3.seconds
   // Bind the service that this server provides
-  override lazy val lagomServer: LagomServer = serverFor[AccountService](wire[AccountServiceImpl])
+  override lazy val lagomServer: LagomServer =
+    serverFor[AccountService](wire[AccountServiceImpl])
 
   // Register the JSON serializer registry
-  override lazy val jsonSerializerRegistry: JsonSerializerRegistry = MoneytransferSerializerRegistry
+  override lazy val jsonSerializerRegistry: JsonSerializerRegistry =
+    MoneytransferSerializerRegistry
 
   // Initialize the sharding of the Aggregate. The following starts the aggregate Behavior under
   // a given sharding entity typeKey.
   clusterSharding.init(
-    Entity(Account.TypeKey)(
-      entityContext =>
-        Account.create(entityContext)
+    Entity(Account.TypeKey)(entityContext => Account.create(entityContext))
+  )
+  clusterSharding.init(
+    Entity(MoneyTransfer.TypeKey)(
+      entityContext => MoneyTransfer.create(entityContext)
     )
   )
 

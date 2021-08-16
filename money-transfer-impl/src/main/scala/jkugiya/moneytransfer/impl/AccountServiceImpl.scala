@@ -12,10 +12,10 @@ class AccountServiceImpl(clusterSharding: ClusterSharding)(implicit ec: Executio
 
   override def debit(customerId: Int): ServiceCall[AccountService.Debit, AccountService.DebitResult] = ServiceCall { debit =>
     val ref = clusterSharding.entityRefFor(Account.TypeKey, customerId.toString)
-    ref.ask[Account.Debit.Result](ref => Account.Debit(debit.amount, ref)).map {
-      case Account.Debit.Accepted(_, _) =>
+    ref.ask[Account.Command.Debit.Result](ref => Account.Command.Debit(debit.amount, ref)).map {
+      case Account.Command.Debit.Accepted(_, _) =>
         AccountService.DebitResult(isOK = true)
-      case Account.Debit.Denied(_) =>
+      case Account.Command.Debit.Denied(_) =>
         AccountService.DebitResult(isOK = false)
     }
   }
@@ -23,14 +23,14 @@ class AccountServiceImpl(clusterSharding: ClusterSharding)(implicit ec: Executio
 
   override def credit(customerId: Int): ServiceCall[AccountService.Credit, NotUsed] = ServiceCall { credit =>
     val ref = clusterSharding.entityRefFor(Account.TypeKey, customerId.toString)
-    ref.ask[Done](ref => Account.Credit(credit.amount, ref)).map { _ =>
+    ref.ask[Done](ref => Account.Command.Credit(credit.amount, ref)).map { _ =>
          NotUsed
     }
   }
 
   override def get(customerId: Int): ServiceCall[NotUsed, AccountService.Balance] = ServiceCall { _ =>
     val ref = clusterSharding.entityRefFor(Account.TypeKey, customerId.toString)
-    ref.ask[BigDecimal](handler => Account.Get(handler)).map { result =>
+    ref.ask[BigDecimal](handler => Account.Command.Get(handler)).map { result =>
       AccountService.Balance(result)
     }
   }

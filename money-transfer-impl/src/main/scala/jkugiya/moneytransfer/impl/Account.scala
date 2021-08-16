@@ -6,7 +6,7 @@ import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AkkaTaggerAdapter}
-import jkugiya.moneytransfer.impl.Account.{Command, CreditAccepted, DebitAccepted, DebitDenied, Event}
+import jkugiya.moneytransfer.impl.Account.{Command, Event}
 import play.api.libs.json.{Format, Json}
 
 case class Account(userId: Int, amount: BigDecimal) {
@@ -14,20 +14,21 @@ case class Account(userId: Int, amount: BigDecimal) {
   def applyCommand(cmd: Command): ReplyEffect[Event, Account] = cmd match {
     case Credit(orderedAmount, ref) =>
       Effect
-        .persist(CreditAccepted(userId, before = amount, amount = orderedAmount))
+        .persist(Event.CreditAccepted(userId, before = amount, amount = orderedAmount))
         .thenReply(ref)(_ => Done)
     case Debit(orderedAmount, ref) =>
       if (orderedAmount > amount) {
-        Effect.persist(DebitDenied(userId))
+        Effect.persist(Event.DebitDenied(userId))
         .thenReply(ref)(_ => Debit.Denied(amount))
       } else {
-        Effect.persist(DebitAccepted(userId, before = amount, amount = orderedAmount))
+        Effect.persist(Event.DebitAccepted(userId, before = amount, amount = orderedAmount))
           .thenReply(ref)(_ => Debit.Accepted(amount, orderedAmount))
       }
     case Get(ref) =>
       Effect.reply(ref)(amount)
   }
 
+  import Event._
   def applyEvent(event: Event): Account = event match {
     case DebitAccepted(_, before, orderedAmount) =>
       Account(userId, before - orderedAmount)
@@ -79,18 +80,18 @@ object Account {
   }
   object Event {
     val Tag: AggregateEventTag[Event] = AggregateEventTag[Event]
-  }
-  case class DebitAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
-  object DebitAccepted {
-    implicit val format: Format[DebitAccepted] = Json.format
-  }
-  case class CreditAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
-  object CreditAccepted {
-    implicit val format: Format[CreditAccepted] = Json.format
-  }
-  case class DebitDenied(userId: Int) extends Event
-  object DebitDenied {
-    implicit val format: Format[DebitDenied] = Json.format
+    case class DebitAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
+    object DebitAccepted {
+      implicit val format: Format[DebitAccepted] = Json.format
+    }
+    case class CreditAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
+    object CreditAccepted {
+      implicit val format: Format[CreditAccepted] = Json.format
+    }
+    case class DebitDenied(userId: Int) extends Event
+    object DebitDenied {
+      implicit val format: Format[DebitDenied] = Json.format
+    }
   }
 
   implicit val format: Format[Account] = Json.format
