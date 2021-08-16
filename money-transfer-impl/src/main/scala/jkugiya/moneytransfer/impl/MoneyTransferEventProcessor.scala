@@ -4,8 +4,13 @@ import akka.Done
 import akka.cluster.sharding.typed.scaladsl.ClusterSharding
 import akka.util.Timeout
 import com.lightbend.lagom.scaladsl.persistence.slick.SlickReadSide
-import com.lightbend.lagom.scaladsl.persistence.{AggregateEventTag, ReadSideProcessor}
-import slick.dbio.DBIOAction
+import com.lightbend.lagom.scaladsl.persistence.{
+  AggregateEventTag,
+  EventStreamElement,
+  ReadSideProcessor
+}
+import org.slf4j.LoggerFactory
+import slick.dbio.DBIO
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -14,33 +19,55 @@ class MoneyTransferEventProcessor(
   readSide: SlickReadSide
 )(implicit ec: ExecutionContext, timeout: Timeout)
     extends ReadSideProcessor[MoneyTransfer.Event] {
+  private val logger = LoggerFactory.getLogger(getClass)
+
+  def moneyTransferRef[E <: MoneyTransfer.Event](elm: EventStreamElement[E]) =
+    clusterSharding.entityRefFor(MoneyTransfer.TypeKey, elm.entityId)
+  def handle[E <: MoneyTransfer.Event](
+    elm: EventStreamElement[E]
+  )(f: E => Future[Done]) =
+    DBIO.from(f(elm.event))
 
   private val builder =
     readSide
       .builder[MoneyTransfer.Event]("money_transfer_offset")
-      .setEventHandler[MoneyTransfer.Event]({ eventElement =>
-        val entityId = eventElement.entityId
-        val moneyTransferRef =
-          clusterSharding.entityRefFor(MoneyTransfer.TypeKey, entityId)
-        DBIOAction.from {
-          eventElement.event match {
+      .setEventHandler[MoneyTransfer.Event.DebitStarted](
+        elm =>
+          handle(elm) {
             case MoneyTransfer.Event.DebitStarted(from, _, amount) =>
               val accountRef =
                 clusterSharding.entityRefFor(Account.TypeKey, from.toString)
               (for {
-                _ <- accountRef.ask[Account.Command.Debit.Result](
+                result <- accountRef.ask[Account.Command.Debit.Result](
                   ref => Account.Command.Debit(amount = amount, ref = ref)
                 )
-                _ <- moneyTransferRef.ask[MoneyTransfer.Confirmation](
-                  MoneyTransfer.Command.StartCredit
-                )
-              } yield Done).fallbackTo(
-                moneyTransferRef
-                  .ask[MoneyTransfer.Confirmation](
-                    MoneyTransfer.Command.ProcessDebitFail
-                  )
-                  .map(_ => Done)
-              )
+                _ <- result match {
+                  case Account.Command.Debit.Accepted(_, _) =>
+                    moneyTransferRef(elm).ask[MoneyTransfer.Confirmation](
+                      MoneyTransfer.Command.StartCredit
+                    )
+                  case Account.Command.Debit.Denied(_) =>
+                    logger.error("Debit denied.")
+                    moneyTransferRef(elm)
+                      .ask[MoneyTransfer.Confirmation](
+                        MoneyTransfer.Command.ProcessDebitFail
+                      )
+                }
+              } yield Done).recoverWith { t =>
+                {
+                  logger.error("Failed to handle DebitStarted", t)
+                  moneyTransferRef(elm)
+                    .ask[MoneyTransfer.Confirmation](
+                      MoneyTransfer.Command.ProcessDebitFail
+                    )
+                    .map(_ => Done)
+                }
+              }
+        }
+      )
+      .setEventHandler[MoneyTransfer.Event.CreditStarted](
+        elm =>
+          handle(elm) {
             case MoneyTransfer.Event.CreditStarted(_, to, amount) =>
               val accountRef =
                 clusterSharding.entityRefFor(Account.TypeKey, to.toString)
@@ -48,22 +75,22 @@ class MoneyTransferEventProcessor(
                 _ <- accountRef.ask[Done](
                   ref => Account.Command.Credit(amount = amount, ref = ref)
                 )
-                _ <- moneyTransferRef.ask[MoneyTransfer.Confirmation](
-                  MoneyTransfer.Command.StartDebitRollback
+                _ <- moneyTransferRef(elm).ask[MoneyTransfer.Confirmation](
+                  MoneyTransfer.Command.ProcessSuccess
                 )
-              } yield Done).fallbackTo(
-                moneyTransferRef
+              } yield Done).recoverWith(t => {
+                logger.error("Failed to handle CreditStarted", t)
+                moneyTransferRef(elm)
                   .ask[MoneyTransfer.Confirmation](
                     MoneyTransfer.Command.ProcessDebitRollbackFail
                   )
                   .map(_ => Done)
-              )
-            case MoneyTransfer.Event.DebitFailed(_, _, _) =>
-              moneyTransferRef
-                .ask[MoneyTransfer.Confirmation](
-                  MoneyTransfer.Command.ProcessDebitFail
-                )
-                .map(_ => Done)
+              })
+        }
+      )
+      .setEventHandler[MoneyTransfer.Event.DebitRollbackStarted](
+        elm =>
+          handle(elm) {
             case MoneyTransfer.Event.DebitRollbackStarted(from, _, amount) =>
               val accountRef =
                 clusterSharding.entityRefFor(Account.TypeKey, from.toString)
@@ -71,25 +98,20 @@ class MoneyTransferEventProcessor(
                 _ <- accountRef.ask[Done](
                   ref => Account.Command.Credit(amount = amount, ref = ref)
                 )
-                _ <- moneyTransferRef.ask[MoneyTransfer.Confirmation](
+                _ <- moneyTransferRef(elm).ask[MoneyTransfer.Confirmation](
                   MoneyTransfer.Command.ProcessDebitRollbacked
                 )
               } yield Done)
-                .fallbackTo(
-                  moneyTransferRef.ask[MoneyTransfer.Confirmation](
-                    MoneyTransfer.Command.ProcessDebitRollbackFail
-                  )
-                )
-                .map(_ => Done)
-            case MoneyTransfer.Event.DebitRollbacked(_, _, _) =>
-              Future.successful(Done)
-            case MoneyTransfer.Event.DebitRollbackFailed(_, _, _) =>
-              Future.successful(Done)
-            case MoneyTransfer.Event.Succeeded(_, _, _) =>
-              Future.successful(Done)
-          }
+                .recoverWith(t => {
+                  logger.error("Failed to handle DebitRollbackStarted", t)
+                  moneyTransferRef(elm)
+                    .ask[MoneyTransfer.Confirmation](
+                      MoneyTransfer.Command.ProcessDebitRollbackFail
+                    )
+                    .map(_ => Done)
+                })
         }
-      })
+      )
 
   override def buildHandler()
     : ReadSideProcessor.ReadSideHandler[MoneyTransfer.Event] = builder.build()

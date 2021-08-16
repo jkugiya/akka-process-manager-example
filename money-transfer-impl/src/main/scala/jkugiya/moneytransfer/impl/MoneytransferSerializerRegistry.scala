@@ -10,12 +10,13 @@ object MoneytransferSerializerRegistry extends JsonSerializerRegistry{
     JsonSerializer[Account.Event.CreditAccepted],
     JsonSerializer[Account],
     // JsonSerializer[MoneyTransfer.Command], ActorRefs cant be serialized by play-json
-    JsonSerializer[MoneyTransfer.Event.CreditStarted],
     JsonSerializer[MoneyTransfer.Event.DebitStarted],
-    JsonSerializer[MoneyTransfer.Event.DebitRollbackStarted],
-    JsonSerializer[MoneyTransfer.Event.Succeeded],
     JsonSerializer[MoneyTransfer.Event.DebitFailed],
+    JsonSerializer[MoneyTransfer.Event.CreditStarted],
+    JsonSerializer[MoneyTransfer.Event.DebitRollbackStarted],
     JsonSerializer[MoneyTransfer.Event.DebitRollbackFailed],
+    JsonSerializer[MoneyTransfer.Event.DebitRollbacked],
+    JsonSerializer[MoneyTransfer.Event.Succeeded],
     JsonSerializer[MoneyTransfer]
   )
 }

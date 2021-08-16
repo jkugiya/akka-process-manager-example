@@ -6,6 +6,7 @@ import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AggregateEventTagger, AkkaTaggerAdapter}
 import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Confirmation, Event, Status}
+import org.slf4j.LoggerFactory
 import play.api.libs.json._
 
 import java.util.UUID
@@ -18,34 +19,43 @@ case class MoneyTransfer(id: UUID,
                          creditResult: Option[Boolean],
                          status: Status) {
 
+  private val logger = LoggerFactory.getLogger(getClass)
+
   import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, MoneyTransfer] =
     cmd match {
-      case StartDebit(ref) =>
+      case StartTransfer(from, to, amount, ref) =>
+        logger.info(s"Started Transfer.")
         Effect.persist(Event.DebitStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
       case StartCredit(ref: ActorRef[Confirmation]) =>
+        logger.info(s"Started Credit.")
         Effect.persist(Event.CreditStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
       case StartDebitRollback(ref: ActorRef[Confirmation]) =>
+        logger.info(s"Started DebitRollback.")
         Effect
           .persist(Event.DebitRollbackStarted(from, to, amount))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitFail(ref: ActorRef[Confirmation]) =>
+        logger.info(s"Debit failed")
         Effect.persist(Event.DebitFailed(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbacked(ref: ActorRef[Confirmation]) =>
+        logger.info(s"Debit Rollbacked")
         Effect
           .persist(Event.DebitRollbacked(from, to, amount))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) =>
+        logger.info(s"DebitRollback failed")
         Effect
           .persist(Event.DebitRollbackFailed(from, to, amount))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessSuccess(ref: ActorRef[Confirmation]) =>
+        logger.info(s"MoneyTransfer Succeeded.")
         Effect.persist(Event.Succeeded(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
     }
 
   import Event._
   def applyEvent(evt: Event): MoneyTransfer = evt match {
-    case DebitStarted(_, _, _) =>
+    case DebitStarted(from, to, amount) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -118,10 +128,11 @@ case class MoneyTransfer(id: UUID,
   }
 }
 
+sealed trait MoneyTransferMessageSerializable
 object MoneyTransfer {
   val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("money_transfer")
 
-  sealed trait Confirmation
+  sealed trait Confirmation extends MoneyTransferMessageSerializable
   object Confirmation {
     case object OK extends Confirmation
   }
@@ -159,9 +170,9 @@ object MoneyTransfer {
       case Succeeded            => JsString("succeeded")
     })
   }
-  sealed trait Command
+  sealed trait Command extends MoneyTransferMessageSerializable
   object Command {
-    case class StartDebit(ref: ActorRef[Confirmation]) extends Command
+    case class StartTransfer(from: Int, to: Int, amount: BigDecimal, ref: ActorRef[Confirmation]) extends Command
     case class StartCredit(ref: ActorRef[Confirmation]) extends Command
     case class StartDebitRollback(ref: ActorRef[Confirmation]) extends Command
     case class ProcessDebitFail(ref: ActorRef[Confirmation]) extends Command

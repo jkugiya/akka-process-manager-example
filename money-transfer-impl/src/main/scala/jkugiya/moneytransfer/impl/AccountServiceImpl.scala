@@ -6,6 +6,7 @@ import akka.{Done, NotUsed}
 import com.lightbend.lagom.scaladsl.api.ServiceCall
 import jkugiya.moneytransfer.api.AccountService
 
+import java.util.UUID
 import scala.concurrent.ExecutionContext
 
 class AccountServiceImpl(clusterSharding: ClusterSharding)(implicit ec: ExecutionContext, timeout: Timeout) extends AccountService {
@@ -33,5 +34,13 @@ class AccountServiceImpl(clusterSharding: ClusterSharding)(implicit ec: Executio
     ref.ask[BigDecimal](handler => Account.Command.Get(handler)).map { result =>
       AccountService.Balance(result)
     }
+  }
+
+  override def transfer: ServiceCall[AccountService.Transfer, NotUsed] = ServiceCall { transfer =>
+    val id = UUID.randomUUID()
+    val ref = clusterSharding.entityRefFor(MoneyTransfer.TypeKey, id.toString)
+    ref.ask[MoneyTransfer.Confirmation](ref => MoneyTransfer.Command.StartTransfer(
+      from = transfer.from, to = transfer.to, amount = transfer.amount, ref = ref
+    )).map(_ => NotUsed)
   }
 }

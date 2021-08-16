@@ -7,9 +7,11 @@ import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AkkaTaggerAdapter}
 import jkugiya.moneytransfer.impl.Account.{Command, Event}
+import org.slf4j.LoggerFactory
 import play.api.libs.json.{Format, Json}
 
 case class Account(userId: Int, amount: BigDecimal) {
+  private val logger = LoggerFactory.getLogger(getClass)
   import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, Account] = cmd match {
     case Credit(orderedAmount, ref) =>
@@ -31,14 +33,17 @@ case class Account(userId: Int, amount: BigDecimal) {
   import Event._
   def applyEvent(event: Event): Account = event match {
     case DebitAccepted(_, before, orderedAmount) =>
+      logger.info(s"DebitAccepted. userId=$userId, before=$before, after=${before - orderedAmount}")
       Account(userId, before - orderedAmount)
     case CreditAccepted(_, before, orderedAmount) =>
+      logger.info(s"CreditAccepted. userId=$userId, before=$before, after=${before + orderedAmount}")
       Account(userId, before + orderedAmount)
     case DebitDenied(_) =>
       this
   }
 }
 
+sealed trait AccountCommandSerializable
 object Account {
   def create(entityContext: EntityContext[Command]): Behavior[Command] = {
     val persistenceId= PersistenceId(entityContext.entityTypeKey.name, entityContext.entityId)
@@ -55,7 +60,7 @@ object Account {
         eventHandler = (account, evt) => account.applyEvent(evt)
       )
 
-  sealed trait Command
+  sealed trait Command extends AccountCommandSerializable
   object Command {
     case class Debit(amount: BigDecimal, ref: ActorRef[Debit.Result]) extends Command
     object Debit {
