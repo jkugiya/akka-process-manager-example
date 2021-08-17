@@ -5,20 +5,54 @@ import akka.cluster.sharding.typed.scaladsl.{EntityContext, EntityTypeKey}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
 import com.lightbend.lagom.scaladsl.persistence.{AggregateEvent, AggregateEventTag, AggregateEventTagger, AkkaTaggerAdapter}
+import jkugiya.moneytransfer.impl.MoneyTransfer.Command.StartTransfer
+import jkugiya.moneytransfer.impl.MoneyTransfer.Event.DebitStarted
 import jkugiya.moneytransfer.impl.MoneyTransfer.{Command, Confirmation, Event, Status}
 import org.slf4j.LoggerFactory
 import play.api.libs.json._
 
 import java.util.UUID
 
-case class MoneyTransfer(id: UUID,
+sealed trait MoneyTransfer {
+  def id: UUID
+  def applyCommand(cmd: Command): ReplyEffect[Event, MoneyTransfer]
+  def applyEvent(event: Event): MoneyTransfer
+}
+case class InitialState(id: UUID) extends MoneyTransfer {
+  private val logger = LoggerFactory.getLogger(getClass)
+
+  override def applyCommand(cmd: Command): ReplyEffect[Event, MoneyTransfer] = cmd match {
+    case StartTransfer(from, to, amount, ref) =>
+      logger.info(s"Started Transfer.")
+      Effect
+        .persist(Event.DebitStarted(from, to, amount, ref))
+        .thenNoReply()
+    case cmd =>
+      Effect.reply(cmd.ref)(Confirmation.NG)
+  }
+
+  override def applyEvent(event: Event): MoneyTransfer = event match {
+    case DebitStarted(from, to, amount, replyTo) =>
+      RunningMoneyTransfer(
+        id = id,
+        from = from,
+        to = to, amount = amount,
+        debitResult = None,
+        creditResult = None,
+        status = MoneyTransfer.Status.DebitStarted,
+        replyTo = replyTo
+      )
+
+  }
+}
+case class RunningMoneyTransfer(id: UUID,
                          from: Int,
                          to: Int,
                          amount: BigDecimal,
                          debitResult: Option[Boolean],
                          creditResult: Option[Boolean],
                          status: Status,
-                         replyTo: Option[ActorRef[Confirmation]]) {
+                         replyTo: ActorRef[Confirmation]) extends MoneyTransfer {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -43,29 +77,29 @@ case class MoneyTransfer(id: UUID,
       case ProcessDebitFail(ref: ActorRef[Confirmation]) =>
         logger.info(s"Debit failed")
         Effect
-          .persist[Event, MoneyTransfer](Event.DebitFailed(from, to, amount, replyTo.get))
+          .persist[Event, MoneyTransfer](Event.DebitFailed(from, to, amount, replyTo))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbacked(ref: ActorRef[Confirmation]) =>
         logger.info(s"Debit Rollbacked")
         Effect
-          .persist[Event, MoneyTransfer](Event.DebitRollbacked(from, to, amount, replyTo.get))
+          .persist[Event, MoneyTransfer](Event.DebitRollbacked(from, to, amount, replyTo))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) =>
         logger.info(s"DebitRollback failed")
         Effect
-          .persist[Event, MoneyTransfer](Event.DebitRollbackFailed(from, to, amount, replyTo.get))
+          .persist[Event, MoneyTransfer](Event.DebitRollbackFailed(from, to, amount, replyTo))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessSuccess(ref: ActorRef[Confirmation]) =>
         logger.info(s"MoneyTransfer Succeeded.")
         Effect
-          .persist[Event, MoneyTransfer](Event.Succeeded(from, to, amount, replyTo.get))
+          .persist[Event, MoneyTransfer](Event.Succeeded(from, to, amount, replyTo))
           .thenReply(ref)(_ => Confirmation.OK)
     }
 
   import Event._
   def applyEvent(evt: Event): MoneyTransfer = evt match {
     case DebitStarted(from, to, amount, replyTo) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -73,10 +107,10 @@ case class MoneyTransfer(id: UUID,
         debitResult = None,
         creditResult = None,
         status = Status.DebitStarted,
-        replyTo = Option(replyTo)
+        replyTo = replyTo
       )
     case DebitFailed(_, _, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -87,7 +121,7 @@ case class MoneyTransfer(id: UUID,
         replyTo = replyTo
       )
     case CreditStarted(_, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -98,7 +132,7 @@ case class MoneyTransfer(id: UUID,
         replyTo = replyTo
       )
     case DebitRollbackStarted(_, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -109,7 +143,7 @@ case class MoneyTransfer(id: UUID,
         replyTo = replyTo
       )
     case DebitRollbacked(_, _, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -120,7 +154,7 @@ case class MoneyTransfer(id: UUID,
         replyTo = replyTo
       )
     case DebitRollbackFailed(_, _, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -131,7 +165,7 @@ case class MoneyTransfer(id: UUID,
         replyTo = replyTo
       )
     case Succeeded(_, _, _, _) =>
-      MoneyTransfer(
+      RunningMoneyTransfer(
         id = id,
         from = from,
         to = to,
@@ -187,7 +221,9 @@ object MoneyTransfer {
       case Succeeded            => JsString("succeeded")
     })
   }
-  sealed trait Command extends MoneyTransferMessageSerializable
+  sealed trait Command extends MoneyTransferMessageSerializable {
+    def ref: ActorRef[Confirmation]
+  }
   object Command {
     case class StartTransfer(from: Int,
                              to: Int,
@@ -235,16 +271,7 @@ object MoneyTransfer {
     EventSourcedBehavior
       .withEnforcedReplies[Command, Event, MoneyTransfer](
         persistenceId = persistenceId,
-        emptyState = MoneyTransfer(
-          id = id,
-          from = 0,
-          to = 0,
-          amount = BigDecimal(0),
-          debitResult = None,
-          creditResult = None,
-          status = Status.Init,
-          replyTo = None
-        ),
+        emptyState = InitialState(id),
         commandHandler = (transfer, cmd) => transfer.applyCommand(cmd),
         eventHandler = (transfer, evt) => transfer.applyEvent(evt)
       )
