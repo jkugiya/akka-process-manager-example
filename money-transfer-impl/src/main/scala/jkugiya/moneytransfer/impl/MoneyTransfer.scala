@@ -17,7 +17,8 @@ case class MoneyTransfer(id: UUID,
                          amount: BigDecimal,
                          debitResult: Option[Boolean],
                          creditResult: Option[Boolean],
-                         status: Status) {
+                         status: Status,
+                         replyTo: Option[ActorRef[Confirmation]]) {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -26,10 +27,14 @@ case class MoneyTransfer(id: UUID,
     cmd match {
       case StartTransfer(from, to, amount, ref) =>
         logger.info(s"Started Transfer.")
-        Effect.persist(Event.DebitStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+        Effect
+          .persist(Event.DebitStarted(from, to, amount, ref))
+          .thenNoReply()
       case StartCredit(ref: ActorRef[Confirmation]) =>
         logger.info(s"Started Credit.")
-        Effect.persist(Event.CreditStarted(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+        Effect
+          .persist(Event.CreditStarted(from, to, amount))
+          .thenReply(ref)(_ => Confirmation.OK)
       case StartDebitRollback(ref: ActorRef[Confirmation]) =>
         logger.info(s"Started DebitRollback.")
         Effect
@@ -37,25 +42,29 @@ case class MoneyTransfer(id: UUID,
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitFail(ref: ActorRef[Confirmation]) =>
         logger.info(s"Debit failed")
-        Effect.persist(Event.DebitFailed(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+        Effect
+          .persist[Event, MoneyTransfer](Event.DebitFailed(from, to, amount, replyTo.get))
+          .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbacked(ref: ActorRef[Confirmation]) =>
         logger.info(s"Debit Rollbacked")
         Effect
-          .persist(Event.DebitRollbacked(from, to, amount))
+          .persist[Event, MoneyTransfer](Event.DebitRollbacked(from, to, amount, replyTo.get))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) =>
         logger.info(s"DebitRollback failed")
         Effect
-          .persist(Event.DebitRollbackFailed(from, to, amount))
+          .persist[Event, MoneyTransfer](Event.DebitRollbackFailed(from, to, amount, replyTo.get))
           .thenReply(ref)(_ => Confirmation.OK)
       case ProcessSuccess(ref: ActorRef[Confirmation]) =>
         logger.info(s"MoneyTransfer Succeeded.")
-        Effect.persist(Event.Succeeded(from, to, amount)).thenReply(ref)(_ => Confirmation.OK)
+        Effect
+          .persist[Event, MoneyTransfer](Event.Succeeded(from, to, amount, replyTo.get))
+          .thenReply(ref)(_ => Confirmation.OK)
     }
 
   import Event._
   def applyEvent(evt: Event): MoneyTransfer = evt match {
-    case DebitStarted(from, to, amount) =>
+    case DebitStarted(from, to, amount, replyTo) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -63,9 +72,10 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = None,
         creditResult = None,
-        status = Status.DebitStarted
+        status = Status.DebitStarted,
+        replyTo = Option(replyTo)
       )
-    case DebitFailed(_, _, _) =>
+    case DebitFailed(_, _, _, _) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -73,7 +83,8 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(false),
         creditResult = None,
-        status = Status.DebitFailed
+        status = Status.DebitFailed,
+        replyTo = replyTo
       )
     case CreditStarted(_, _, _) =>
       MoneyTransfer(
@@ -83,7 +94,8 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(true),
         creditResult = None,
-        status = Status.CreditStarted
+        status = Status.CreditStarted,
+        replyTo = replyTo
       )
     case DebitRollbackStarted(_, _, _) =>
       MoneyTransfer(
@@ -93,9 +105,10 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(true),
         creditResult = Option(false),
-        status = Status.DebitRollbackStarted
+        status = Status.DebitRollbackStarted,
+        replyTo = replyTo
       )
-    case DebitRollbacked(_, _, _) =>
+    case DebitRollbacked(_, _, _, _) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -103,9 +116,10 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(true),
         creditResult = Option(false),
-        status = Status.DebitRollbacked
+        status = Status.DebitRollbacked,
+        replyTo = replyTo
       )
-    case DebitRollbackFailed(_, _, _) =>
+    case DebitRollbackFailed(_, _, _, _) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -113,9 +127,10 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(true),
         creditResult = Option(false),
-        status = Status.DebitRollbackFailed
+        status = Status.DebitRollbackFailed,
+        replyTo = replyTo
       )
-    case Succeeded(_, _, _) =>
+    case Succeeded(_, _, _, _) =>
       MoneyTransfer(
         id = id,
         from = from,
@@ -123,7 +138,8 @@ case class MoneyTransfer(id: UUID,
         amount = amount,
         debitResult = Option(true),
         creditResult = Option(true),
-        status = Status.Succeeded
+        status = Status.Succeeded,
+        replyTo = replyTo
       )
   }
 }
@@ -135,6 +151,7 @@ object MoneyTransfer {
   sealed trait Confirmation extends MoneyTransferMessageSerializable
   object Confirmation {
     case object OK extends Confirmation
+    case object NG extends Confirmation
   }
 
   sealed trait Status
@@ -172,52 +189,37 @@ object MoneyTransfer {
   }
   sealed trait Command extends MoneyTransferMessageSerializable
   object Command {
-    case class StartTransfer(from: Int, to: Int, amount: BigDecimal, ref: ActorRef[Confirmation]) extends Command
+    case class StartTransfer(from: Int,
+                             to: Int,
+                             amount: BigDecimal,
+                             ref: ActorRef[Confirmation])
+        extends Command
     case class StartCredit(ref: ActorRef[Confirmation]) extends Command
     case class StartDebitRollback(ref: ActorRef[Confirmation]) extends Command
     case class ProcessDebitFail(ref: ActorRef[Confirmation]) extends Command
-    case class ProcessDebitRollbacked(ref: ActorRef[Confirmation]) extends Command
-    case class ProcessDebitRollbackFail(ref: ActorRef[Confirmation]) extends Command
+    case class ProcessDebitRollbacked(ref: ActorRef[Confirmation])
+        extends Command
+    case class ProcessDebitRollbackFail(ref: ActorRef[Confirmation])
+        extends Command
     case class ProcessSuccess(ref: ActorRef[Confirmation]) extends Command
   }
 
-  sealed trait Event extends AggregateEvent[Event] {
+  sealed trait Event extends AggregateEvent[Event] with MoneyTransferMessageSerializable {
     override def aggregateTag: AggregateEventTagger[Event] = Event.Tag
   }
   object Event {
-    case class DebitStarted(from: Int, to: Int, amount: BigDecimal)
+    case class DebitStarted(from: Int, to: Int, amount: BigDecimal, replyTo: ActorRef[Confirmation])
         extends Event
-    object DebitStarted {
-      implicit val format: Format[DebitStarted] = Json.format
-    }
-    case class DebitFailed(from: Int, to: Int, amount: BigDecimal) extends Event
-    object DebitFailed {
-      implicit val format: Format[DebitFailed] = Json.format
-    }
+    case class DebitFailed(from: Int, to: Int, amount: BigDecimal, replyTo: ActorRef[Confirmation]) extends Event
     case class CreditStarted(from: Int, to: Int, amount: BigDecimal)
         extends Event
-    object CreditStarted {
-      implicit val format: Format[CreditStarted] = Json.format
-    }
     case class DebitRollbackStarted(from: Int, to: Int, amount: BigDecimal)
         extends Event
-    object DebitRollbackStarted {
-      implicit val format: Format[DebitRollbackStarted] = Json.format
-    }
-    case class DebitRollbackFailed(from: Int, to: Int, amount: BigDecimal)
+    case class DebitRollbackFailed(from: Int, to: Int, amount: BigDecimal, replyTo: ActorRef[Confirmation])
         extends Event
-    object DebitRollbackFailed {
-      implicit val format: Format[DebitRollbackFailed] = Json.format
-    }
-    case class DebitRollbacked(from: Int, to: Int, amount: BigDecimal)
+    case class DebitRollbacked(from: Int, to: Int, amount: BigDecimal, replyTo: ActorRef[Confirmation])
         extends Event
-    object DebitRollbacked {
-      implicit val format: Format[DebitRollbacked] = Json.format
-    }
-    case class Succeeded(from: Int, to: Int, amount: BigDecimal) extends Event
-    object Succeeded {
-      implicit val format: Format[Succeeded] = Json.format
-    }
+    case class Succeeded(from: Int, to: Int, amount: BigDecimal, replyTo: ActorRef[Confirmation]) extends Event
     val Tag: AggregateEventTag[Event] = AggregateEventTag[Event]
   }
 
@@ -240,11 +242,10 @@ object MoneyTransfer {
           amount = BigDecimal(0),
           debitResult = None,
           creditResult = None,
-          status = Status.Init
+          status = Status.Init,
+          replyTo = None
         ),
         commandHandler = (transfer, cmd) => transfer.applyCommand(cmd),
         eventHandler = (transfer, evt) => transfer.applyEvent(evt)
       )
-
-  implicit val format: Format[MoneyTransfer] = Json.format
 }

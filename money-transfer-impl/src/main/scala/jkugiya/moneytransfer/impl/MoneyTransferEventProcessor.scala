@@ -34,7 +34,7 @@ class MoneyTransferEventProcessor(
       .setEventHandler[MoneyTransfer.Event.DebitStarted](
         elm =>
           handle(elm) {
-            case MoneyTransfer.Event.DebitStarted(from, _, amount) =>
+            case MoneyTransfer.Event.DebitStarted(from, _, amount, _) =>
               val accountRef =
                 clusterSharding.entityRefFor(Account.TypeKey, from.toString)
               (for {
@@ -112,6 +112,34 @@ class MoneyTransferEventProcessor(
                 })
         }
       )
+      .setEventHandler[MoneyTransfer.Event.DebitFailed](
+        elm =>
+          handle(elm) {
+            case MoneyTransfer.Event.DebitFailed(_, _, _, ref) =>
+              ref ! MoneyTransfer.Confirmation.NG
+              Future.successful(Done)
+          })
+      .setEventHandler[MoneyTransfer.Event.DebitRollbacked](
+        elm =>
+          handle(elm) {
+            case MoneyTransfer.Event.DebitRollbacked(_, _, _, ref) =>
+              ref ! MoneyTransfer.Confirmation.NG
+              Future.successful(Done)
+          })
+      .setEventHandler[MoneyTransfer.Event.DebitRollbackFailed](
+        elm =>
+          handle(elm) {
+            case MoneyTransfer.Event.DebitRollbackFailed(_, _, _, ref) =>
+              ref ! MoneyTransfer.Confirmation.NG
+              Future.successful(Done)
+          })
+      .setEventHandler[MoneyTransfer.Event.Succeeded](
+        elm =>
+          handle(elm) {
+            case MoneyTransfer.Event.Succeeded(_, _, _, ref) =>
+              ref ! MoneyTransfer.Confirmation.OK
+              Future.successful(Done)
+          })
 
   override def buildHandler()
     : ReadSideProcessor.ReadSideHandler[MoneyTransfer.Event] = builder.build()

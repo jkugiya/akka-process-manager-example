@@ -2,15 +2,14 @@ package jkugiya.moneytransfer.api
 
 import akka.NotUsed
 import com.lightbend.lagom.scaladsl.api.{Descriptor, Service, ServiceCall}
-import jkugiya.moneytransfer.api.AccountService.{Balance, Credit, Debit, DebitResult, Transfer}
+import jkugiya.moneytransfer.api.AccountService.{Balance, Credit, Debit, DebitResult, Transfer, TransferResult}
 import play.api.libs.json.{Format, Json}
 
 trait AccountService extends Service {
   def debit(customerId: Int): ServiceCall[Debit, DebitResult]
   def credit(customerId: Int): ServiceCall[Credit, NotUsed]
   def get(customerId: Int): ServiceCall[NotUsed, Balance]
-  def transfer: ServiceCall[Transfer, NotUsed]
-
+  def transfer: ServiceCall[Transfer, TransferResult]
 
   override final def descriptor: Descriptor = {
     import Service._
@@ -44,5 +43,9 @@ object AccountService {
   case class Transfer(from: Int, to: Int, amount: BigDecimal)
   object Transfer {
     implicit val format: Format[Transfer] = Json.format
+  }
+  case class TransferResult(isOK: Boolean)
+  object TransferResult {
+    implicit val format: Format[TransferResult] = Json.format
   }
 }
