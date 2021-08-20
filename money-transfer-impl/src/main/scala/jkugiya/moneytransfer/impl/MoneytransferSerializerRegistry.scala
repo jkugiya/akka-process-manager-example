@@ -7,6 +7,7 @@ object MoneytransferSerializerRegistry extends JsonSerializerRegistry{
     // JsonSerializer[Account.Command], ActorRefs cant be serialized by play-json
     JsonSerializer[Account.Event.DebitAccepted],
     JsonSerializer[Account.Event.DebitDenied],
+    JsonSerializer[Account.Event.TransactionAccepted],
     JsonSerializer[Account.Event.CreditAccepted],
     JsonSerializer[Account]
     // JsonSerializer[MoneyTransfer.Command], ActorRefs cant be serialized by play-json

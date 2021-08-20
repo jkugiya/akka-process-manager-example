@@ -10,36 +10,64 @@ import jkugiya.moneytransfer.impl.Account.{Command, Event}
 import org.slf4j.LoggerFactory
 import play.api.libs.json.{Format, Json}
 
-case class Account(userId: Int, amount: BigDecimal) {
+import java.util.UUID
+
+case class Account(userId: Int, amount: BigDecimal, transactionId: Option[UUID]) {
   private val logger = LoggerFactory.getLogger(getClass)
   import Command._
   def applyCommand(cmd: Command): ReplyEffect[Event, Account] = cmd match {
-    case Credit(orderedAmount, ref) =>
-      Effect
-        .persist(Event.CreditAccepted(userId, before = amount, amount = orderedAmount))
-        .thenReply(ref)(_ => Done)
-    case Debit(orderedAmount, ref) =>
-      if (orderedAmount > amount) {
-        Effect.persist(Event.DebitDenied(userId))
-        .thenReply(ref)(_ => Debit.Denied(amount))
-      } else {
-        Effect.persist(Event.DebitAccepted(userId, before = amount, amount = orderedAmount))
-          .thenReply(ref)(_ => Debit.Accepted(amount, orderedAmount))
+    case Credit(tid, orderedAmount, ref) =>
+      transactionId.fold[ReplyEffect[Event, Account]](
+        ifEmpty =
+          Effect
+            .persist(Event.CreditAccepted(tid, userId, before = amount, amount = orderedAmount))
+            .thenReply(ref)(_ => Credit.Accepted)
+      ) { transactionId =>
+        if (transactionId == tid) {
+          Effect
+            .persist(Event.CreditAccepted(tid, userId, before = amount, amount = orderedAmount))
+            .thenReply(ref)(_ => Credit.Accepted)
+        } else {
+          Effect.reply(ref)(Credit.Denied)
+        }
+      }
+    case Debit(tid, orderedAmount, ref) =>
+      def processDebit(tid: UUID): ReplyEffect[Event, Account] =
+        if (orderedAmount > amount) {
+          logger.info(s"Debit Accepting ${orderedAmount}, ${amount}")
+          Effect.persist(Event.DebitDenied(userId))
+            .thenReply(ref)(_ => Debit.Denied(amount))
+        } else {
+          logger.info(s"Debit Denying ${orderedAmount}, ${amount}")
+          Effect.persist(Event.DebitAccepted(tid, userId, before = amount, amount = orderedAmount))
+            .thenReply(ref)(_ => Debit.Accepted(amount, orderedAmount))
+        }
+      transactionId.fold[ReplyEffect[Event, Account]](
+        ifEmpty = processDebit(tid)
+      ) { transactionId =>
+        if (transactionId == tid) processDebit(tid)
+        else {
+          Effect.reply(ref)(Debit.Denied(amount))
+        }
       }
     case Get(ref) =>
       Effect.reply(ref)(amount)
+    case AcceptTransaction(transactionId, ref) =>
+      Effect.persist(Event.TransactionAccepted(transactionId)).thenReply(ref)(_ => Done)
   }
 
   import Event._
   def applyEvent(event: Event): Account = event match {
-    case DebitAccepted(_, before, orderedAmount) =>
+    case DebitAccepted(transactionId, _, before, orderedAmount) =>
       logger.info(s"DebitAccepted. userId=$userId, before=$before, after=${before - orderedAmount}")
-      Account(userId, before - orderedAmount)
-    case CreditAccepted(_, before, orderedAmount) =>
+      Account(userId, before - orderedAmount, Option(transactionId))
+    case CreditAccepted(transactionId, _, before, orderedAmount) =>
       logger.info(s"CreditAccepted. userId=$userId, before=$before, after=${before + orderedAmount}")
-      Account(userId, before + orderedAmount)
+      Account(userId, before + orderedAmount, Option(transactionId))
     case DebitDenied(_) =>
       this
+    case TransactionAccepted(tid) =>
+      Account(userId, amount, transactionId.filterNot(_ == tid))
   }
 }
 
@@ -55,20 +83,29 @@ object Account {
     EventSourcedBehavior
       .withEnforcedReplies[Command, Event, Account](
         persistenceId = persistenceId,
-        emptyState = Account(userId, BigDecimal(0)),
+        emptyState = Account(userId, BigDecimal(0), None),
         commandHandler = (account, cmd) => account.applyCommand(cmd),
         eventHandler = (account, evt) => account.applyEvent(evt)
       )
 
   sealed trait Command extends AccountCommandSerializable
   object Command {
-    case class Debit(amount: BigDecimal, ref: ActorRef[Debit.Result]) extends Command
+    case class Debit(transactionId: UUID, amount: BigDecimal, ref: ActorRef[Debit.Result]) extends Command
     object Debit {
       sealed trait Result
       case class Accepted(before: BigDecimal, amount: BigDecimal) extends Result
       case class Denied(current: BigDecimal) extends Result
     }
-    case class Credit(amount: BigDecimal, ref: ActorRef[Done]) extends Command
+    case class Credit(transactionId: UUID, amount: BigDecimal, ref: ActorRef[Credit.Result]) extends Command
+    object Credit {
+      sealed trait Result
+      case object Accepted extends Result
+      case object Denied extends Result
+
+      def accepted(): Result = Accepted
+      def denied(): Result = Denied
+    }
+    case class AcceptTransaction(transactionId: UUID, ref: ActorRef[Done]) extends Command
     case class Get(ref: ActorRef[BigDecimal]) extends Command
   }
 
@@ -79,13 +116,17 @@ object Account {
   }
   object Event {
     val Tag: AggregateEventTag[Event] = AggregateEventTag[Event]
-    case class DebitAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
+    case class DebitAccepted(transactionId: UUID, userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
     object DebitAccepted {
       implicit val format: Format[DebitAccepted] = Json.format
     }
-    case class CreditAccepted(userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
+    case class CreditAccepted(transactionId: UUID, userId: Int, before: BigDecimal, amount: BigDecimal) extends Event
     object CreditAccepted {
       implicit val format: Format[CreditAccepted] = Json.format
+    }
+    case class TransactionAccepted(transactionId: UUID) extends Event
+    object TransactionAccepted {
+      implicit val format: Format[TransactionAccepted] = Json.format
     }
     case class DebitDenied(userId: Int) extends Event
     object DebitDenied {
